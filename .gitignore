@@ -1,0 +1,6 @@
+*.json
+*.html
+*.md
+!README.md
+plan.txt
+node_modules/
