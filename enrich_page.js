@@ -1,5 +1,7 @@
 const fs = require('fs');
 const { chromium } = require('playwright');
+// const StealthPlugin = require('playwright-extra-plugin-stealth')
+// chromium.use(StealthPlugin())
 
 async function enrichProperty(page, url) {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -41,27 +43,163 @@ async function main() {
   const outPath = path.replace(/\.json$/, '_enriched.json');
 
   // Launch browser and context ONCE
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0',
     locale: 'en-AU',
+    viewport: { width: 3440, height: 1440 },
+    screen: { width: 3440, height: 1440 },
     extraHTTPHeaders: {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'accept': '*/*',
+      'accept-encoding': 'gzip, br',
       'accept-language': 'en-AU,en;q=0.9,en-US;q=0.8',
-      'cache-control': 'max-age=0',
-      'priority': 'u=0, i',
-      'referer': 'https://www.realestate.com.au/rent/with-2-bedrooms-between-525-1200/map-1?maxBeds=2&availableBefore=2025-07-21&misc=ex-deposit-taken&keywords=air%20conditioning&checkedFeatures=air%20conditioning&boundingBox=-33.83848384559149,151.1269145127142,-33.92527322748691,151.30758811195736&activeSort=list-date&sourcePage=map&sourceElement=location-tile-search',
+      'priority': 'u=1, i',
+      'referer': 'https://fingerprint-scan.com/',
       'sec-ch-ua': '"Microsoft Edge";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
       'sec-ch-ua-mobile': '?0',
       'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-dest': 'document',
-      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
-      'sec-fetch-user': '?1',
-      'upgrade-insecure-requests': '1',
     }
   });
+
+  // Spoof worker context properties
+  context.on('worker', async worker => {
+    try {
+      await worker.evaluate(() => {
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-AU', 'en', 'en-US'] });
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        // WebGL spoofing in workers
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+          if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+          if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 (0x00002204) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+          return getParameter.call(this, parameter);
+        };
+      });
+    } catch (e) {
+      // Some workers may not expose navigator, ignore errors
+    }
+  });
+
+  // Anti-bot fingerprinting spoofing
+  await context.addInitScript(() => {
+    // Platform
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    // Languages
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-AU', 'en', 'en-US'] });
+    // Webdriver
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    // Plugins (realistic PDF plugins, indexable)
+    const fakePlugins = [
+      {
+        name: 'PDF Viewer',
+        filename: 'internal-pdf-viewer',
+        description: 'Portable Document Format',
+        length: 1
+      },
+      {
+        name: 'Chrome PDF Viewer',
+        filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+        description: '',
+        length: 1
+      },
+      {
+        name: 'Chromium PDF Viewer',
+        filename: 'internal-pdf-viewer',
+        description: '',
+        length: 1
+      },
+      {
+        name: 'Microsoft Edge PDF Viewer',
+        filename: 'internal-pdf-viewer',
+        description: '',
+        length: 1
+      },
+      {
+        name: 'WebKit built-in PDF',
+        filename: 'internal-pdf-viewer',
+        description: '',
+        length: 1
+      }
+    ];
+    function makePluginArray(arr) {
+      arr.forEach((p, i) => arr[i] = p);
+      arr.item = function(i) { return arr[i]; };
+      arr.namedItem = function(name) { return arr.find(p => p.name === name); };
+      arr.length = arr.length;
+      return arr;
+    }
+    Object.defineProperty(navigator, 'plugins', {
+      get: () => makePluginArray([...fakePlugins])
+    });
+    // MimeTypes (realistic, indexable)
+    const fakeMimeTypes = [
+      {
+        type: 'application/pdf',
+        description: 'Portable Document Format',
+        suffixes: 'pdf',
+        enabledPlugin: fakePlugins[0]
+      },
+      {
+        type: 'text/pdf',
+        description: 'Portable Document Format',
+        suffixes: 'pdf',
+        enabledPlugin: fakePlugins[0]
+      }
+    ];
+    function makeMimeTypeArray(arr) {
+      arr.forEach((m, i) => arr[i] = m);
+      arr.item = function(i) { return arr[i]; };
+      arr.namedItem = function(type) { return arr.find(m => m.type === type); };
+      arr.length = arr.length;
+      return arr;
+    }
+    Object.defineProperty(navigator, 'mimeTypes', {
+      get: () => makeMimeTypeArray([...fakeMimeTypes])
+    });
+    // WebGL Vendor/Renderer
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+      if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+      if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 (0x00002204) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+      return getParameter.call(this, parameter);
+    };
+  });
+
   const page = await context.newPage();
+
+  // Intercept all requests to ensure headers match real.txt
+  await page.route('**', (route, request) => {
+    const headers = {
+      ...request.headers(),
+      'accept': '*/*',
+      'accept-encoding': 'gzip, br',
+      'accept-language': 'en-AU,en;q=0.9,en-US;q=0.8',
+      'priority': 'u=1, i',
+      'referer': 'https://fingerprint-scan.com/',
+      'sec-ch-ua': '"Microsoft Edge";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+    };
+    // Remove headers not in real.txt
+    delete headers['cache-control'];
+    delete headers['pragma'];
+    delete headers['sec-fetch-user'];
+    delete headers['upgrade-insecure-requests'];
+    route.continue({ headers });
+  });
+
+  // Navigate to realestate.com.au and wait for 10 seconds
+  // await page.goto('https://www.realestate.com.au', { waitUntil: 'domcontentloaded' });
+  await page.goto('https://arh.antoinevastel.com/bots/areyouheadless', { waitUntil: 'domcontentloaded' });
+  console.log('Landed on realestate.com.au, waiting 10 seconds...');
+  await page.waitForTimeout(1000000);
 
   for (const prop of data) {
     console.log('Enriching', prop.url);
